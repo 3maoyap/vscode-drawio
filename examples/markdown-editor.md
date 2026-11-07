@@ -36,11 +36,15 @@ the surrounding document.
         <mxCell id="BmOgo1oCYmphAoBWguAm-1" parent="1" style="whiteSpace=wrap;html=1;" value="Foobar" vertex="1">
           <mxGeometry height="60" width="120" x="1145" y="607" as="geometry" />
         </mxCell>
+        <UserObject label="open markdown" link="./inline-editor/sample.md" id="rkcPxaa7kbs5BlVIvAWD-1">
+          <mxCell parent="1" style="whiteSpace=wrap;html=1;strokeColor=#ff0000;strokeWidth=2;fontFamily=Courier New;fontSize=18;fontColor=#ff0000;" vertex="1">
+            <mxGeometry height="60" width="120" x="709" y="895" as="geometry" />
+          </mxCell>
+        </UserObject>
       </root>
     </mxGraphModel>
   </diagram>
 </mxfile>
-
 ```
 
 

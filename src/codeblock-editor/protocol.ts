@@ -50,5 +50,5 @@ export type GuestToHostMessage =
 	| { type: "ready" }
 	| { type: "log"; message: string }
 	| { type: "command"; command: string }
-	| { type: "openLink"; href: string }
+	| { type: "openLink"; href: string; baseUri?: string }
 	| { type: "updateLocalStorage"; newLocalStorage: Record<string, string> };

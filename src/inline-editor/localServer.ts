@@ -1,4 +1,5 @@
 import { VSCODE_PASSTHROUGH_KEYS } from "../vscodeShortcuts";
+import { linkGuardScript } from "../utils/linkGuard";
 
 // Lazy-require Node built-ins so this module can be imported in the
 // browser extension host without crashing (http/fs are only available
@@ -103,6 +104,7 @@ const KEYBOARD_OVERRIDE_SCRIPT = `<script>
 	}
 	patchPrefixWhenReady();
 })();
+${linkGuardScript(false)}
 </script>`;
 
 const MIME_TYPES: Record<string, string> = {

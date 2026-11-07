@@ -172,7 +172,14 @@ class Session {
 				break;
 			case "openLink":
 				if (typeof msg.href === "string") {
-					sendToHost?.({ type: "openLink", href: msg.href });
+					sendToHost?.({
+						type: "openLink",
+						href: msg.href,
+						// Draw.io resolves relative links against the document
+						// base (the bundled webapp folder). The host needs it to
+						// recover the relative path the user typed.
+						baseUri: document.baseURI,
+					});
 				}
 				break;
 			case "shortcut":
@@ -527,6 +534,64 @@ function startOffline(config: GuestConfig, session: Session): DrawioChannel {
 			this.baseDomain = new URL(baseUrl).origin;
 			this.baseUrl = baseUrl;
 		};
+
+		// A relativized cell link must not navigate this document or open the
+		// OS browser. Only the default action is cancelled: Draw.io's own click
+		// handlers still post the openLink event handled by the extension.
+		(function installLinkGuard() {
+			const isInternal = (value: string): boolean => {
+				try {
+					const url = new URL(value, document.baseURI);
+					return (
+						url.hostname === "127.0.0.1" ||
+						url.hostname === "localhost" ||
+						url.hostname.includes(".vscode-resource.vscode-cdn.net") ||
+						url.protocol === "vscode-webview:" ||
+						url.protocol === "vscode-file:" ||
+						url.pathname.includes("/drawio/src/main/webapp/")
+					);
+				} catch {
+					return false;
+				}
+			};
+			const shouldGuard = (value: string): boolean =>
+				!/^[a-z][a-z0-9+.-]*:/i.test(value) || isInternal(value);
+
+			window.addEventListener(
+				"click",
+				(evt) => {
+					let el: any = evt.target;
+					while (
+						el &&
+						!(el.nodeName && String(el.nodeName).toLowerCase() === "a")
+					) {
+						el = el.parentNode || el.host || null;
+					}
+					const href: string | null =
+						el && el.getAttribute ? el.getAttribute("href") : null;
+					if (
+						!href ||
+						href.charAt(0) === "#" ||
+						/^javascript:/i.test(href)
+					) {
+						return;
+					}
+					if (shouldGuard(href)) {
+						evt.preventDefault();
+					}
+				},
+				true
+			);
+
+			const originalOpen = window.open;
+			(window as any).open = function (this: any, ...args: any[]) {
+				const url = args[0];
+				if (typeof url === "string" && shouldGuard(url)) {
+					return null;
+				}
+				return (originalOpen as any).apply(this, args);
+			};
+		})();
 
 		App.main();
 	})().catch((e) => showStatus(`Could not load Draw.io: ${e}`, true));

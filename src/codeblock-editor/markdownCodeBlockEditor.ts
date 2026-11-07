@@ -23,10 +23,10 @@ import { DrawioLibrarySection, simpleDrawioLibrary } from "../DrawioClient";
 import {
 	VSCODE_PASSTHROUGH_COMMANDS,
 	VSCODE_PASSTHROUGH_KEYS,
-	isExternalLink,
 } from "../vscodeShortcuts";
 import { withConfigSetting } from "../drawioConfiguration";
 import { toScriptJson } from "../utils/toScriptJson";
+import { handleDiagramLink } from "../utils/openDiagramLink";
 import { parseBlockAttrs } from "../inline-editor/diagramParser";
 import {
 	GuestConfig,
@@ -202,8 +202,11 @@ export function createMarkdownCodeBlockEditorsApi(
 						}
 						break;
 					case "openLink":
-						if (isExternalLink(message.href)) {
-							vscode.env.openExternal(vscode.Uri.parse(message.href));
+						if (documentUri) {
+							void handleDiagramLink(message.href, {
+								diagramUri: documentUri,
+								baseUrls: message.baseUri ? [message.baseUri] : [],
+							});
 						}
 						break;
 					case "updateLocalStorage":

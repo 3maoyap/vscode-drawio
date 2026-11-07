@@ -6,10 +6,10 @@ import { Config } from "../Config";
 import {
 	VSCODE_PASSTHROUGH_COMMANDS,
 	VSCODE_PASSTHROUGH_KEYS,
-	isExternalLink,
 } from "../vscodeShortcuts";
 import { withConfigSetting } from "../drawioConfiguration";
 import { appendEmbedParams } from "../utils/appendEmbedParams";
+import { handleDiagramLink } from "../utils/openDiagramLink";
 import { toScriptJson } from "../utils/toScriptJson";
 import {
 	DiagramBlock,
@@ -260,7 +260,10 @@ function decodeExportedImage(dataUri: string): Buffer | null {
  * Handle a "vscodeShortcut" message forwarded from the draw.io iframe
  * via the outer webview.  Returns true if the message was handled.
  */
-function handleForwardedMessage(msg: { type: string; command?: string; href?: string; message?: string }): boolean {
+function handleForwardedMessage(
+	msg: { type: string; command?: string; href?: string; message?: string },
+	linkContext: { diagramUri: vscode.Uri; baseUrls: string[] }
+): boolean {
 	if (msg.type === "vscodeShortcut" && msg.command) {
 		// Any frame in the webview can post this (the webview cannot always
 		// tell the frames apart), so only the pass-through chords' commands run.
@@ -270,11 +273,9 @@ function handleForwardedMessage(msg: { type: string; command?: string; href?: st
 		return true;
 	}
 	if (msg.type === "openLink" && msg.href) {
-		// Link click forwarded from draw.io (suppressNewWindows mode): open it in
-		// the host's default browser instead of a new tab/window.
-		if (isExternalLink(msg.href)) {
-			vscode.env.openExternal(vscode.Uri.parse(msg.href));
-		}
+		// Link click forwarded from draw.io (suppressNewWindows mode): relative
+		// links open beside the diagram, web links in the default browser.
+		void handleDiagramLink(msg.href, linkContext);
 		return true;
 	}
 	if (msg.type === "conversionFailed" && msg.message) {
@@ -865,7 +866,7 @@ async function openDiagramEditor(
 
 	activePanel.webview.onDidReceiveMessage(
 		async (msg) => {
-			if (handleForwardedMessage(msg)) return;
+			if (handleForwardedMessage(msg, { diagramUri: document.uri, baseUrls: [editorUrl] })) return;
 			switch (msg.type) {
 				case "webviewReady":
 					activePanel!.webview.postMessage({
@@ -997,7 +998,7 @@ async function openSourceEditor(
 
 	activePanel.webview.onDidReceiveMessage(
 		async (msg) => {
-			if (handleForwardedMessage(msg)) return;
+			if (handleForwardedMessage(msg, { diagramUri: document.uri, baseUrls: [editorUrl] })) return;
 			switch (msg.type) {
 				case "webviewReady":
 					activePanel!.webview.postMessage({
@@ -1295,7 +1296,7 @@ class DrawioCustomEditorProvider implements vscode.CustomTextEditorProvider {
 
 		webviewPanel.webview.onDidReceiveMessage(
 			async (msg) => {
-				if (handleForwardedMessage(msg)) return;
+				if (handleForwardedMessage(msg, { diagramUri: document.uri, baseUrls: [editorUrl] })) return;
 				switch (msg.type) {
 					case "webviewReady":
 						webviewPanel.webview.postMessage({
@@ -1610,7 +1611,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 		};
 
 		const handleMessage = async (msg: any): Promise<void> => {
-			if (handleForwardedMessage(msg)) { return; }
+			if (handleForwardedMessage(msg, { diagramUri: document.uri, baseUrls: [editorUrl] })) { return; }
 			switch (msg.type) {
 				case "previewReady":
 					webviewPanel.webview.postMessage({

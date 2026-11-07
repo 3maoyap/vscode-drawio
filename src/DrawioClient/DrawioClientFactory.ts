@@ -1,6 +1,5 @@
 import {
 	commands,
-	env,
 	Webview,
 	OutputChannel,
 	Uri,
@@ -26,6 +25,8 @@ import { autorun, observable, runInAction, untracked } from "mobx";
 import { sha256 } from "js-sha256";
 import { getDrawioExtensions } from "../DrawioExtensionApi";
 import { BufferImpl } from "../utils/buffer";
+import { handleDiagramLink } from "../utils/openDiagramLink";
+import { linkGuardScript } from "../utils/linkGuard";
 
 export class DrawioClientFactory {
 	// Reloads of all editors while the Configuration dialog writes the settings
@@ -179,11 +180,28 @@ export class DrawioClientFactory {
 				commands.executeCommand((message as any).command);
 			} else if (
 				(message as any).event === "openLink" &&
-				(message as any).href
+				typeof (message as any).href === "string"
 			) {
-				// Link click forwarded from draw.io (suppressNewWindows mode):
-				// open it in the host's default browser instead of a new tab.
-				env.openExternal(Uri.parse((message as any).href));
+				// Draw.io resolves relative cell links against the bundled webapp
+				// folder. Recover the relative path and open the target beside the
+				// diagram; real web links still go to the default browser.
+				const baseUrls =
+					config.mode.kind === "offline"
+						? [
+								webview
+									.asWebviewUri(
+										Uri.joinPath(
+											this.extensionUri,
+											"drawio/src/main/webapp"
+										)
+									)
+									.toString(),
+						  ]
+						: [];
+				void handleDiagramLink((message as any).href, {
+					diagramUri: uri,
+					baseUrls,
+				});
 			} else if ((message as any).event === "configuration") {
 				// Apply in the Configuration dialog: stores the options in the
 				// user settings and the API keys in the secret storage. The open
@@ -341,6 +359,7 @@ export class DrawioClientFactory {
 		// TODO use template engine
 		// Prevent injection attacks by using JSON.stringify.
 		const patchedHtml = html
+			.replace("$$linkGuardScript$$", () => linkGuardScript(true))
 			.replace(/\$\$literal-vsuri\$\$/g, vsuri.toString())
 			.replace("$$theme$$", JSON.stringify(themeVals.theme))
 			.replace("$$appearance$$", JSON.stringify(themeVals.appearance))
