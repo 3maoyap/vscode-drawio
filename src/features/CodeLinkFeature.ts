@@ -6,9 +6,7 @@ import {
 	Range,
 	Position,
 	ThemeColor,
-	workspace,
 	TextEditorRevealType,
-	ViewColumn,
 	TextEditorDecorationType,
 	TextEditor,
 	SymbolInformation,
@@ -23,6 +21,7 @@ import { autorun, action } from "mobx";
 import { Config } from "../Config";
 import { path } from "../utils/path";
 import { registerFailableCommand } from "../utils/registerFailableCommand";
+import { openLinkedFile } from "../utils/openDiagramLink";
 
 const toggleCodeLinkActivationCommandName =
 	"hediet.vscode-drawio.toggleCodeLinkActivation";
@@ -167,7 +166,7 @@ export class LinkCodeWithSelectedNodeService {
 		lastActiveDrawioEditor.drawioClient.linkSelectedNodeWithData(
 			pos.serialize(lastActiveDrawioEditor.uri)
 		);
-		this.revealSelection(pos);
+		this.revealSelection(pos, lastActiveDrawioEditor.uri);
 	}
 
 	@action.bound
@@ -297,7 +296,7 @@ export class LinkCodeWithSelectedNodeService {
 						linkedData,
 						editor.uri
 					);
-					await this.revealSelection(pos);
+					await this.revealSelection(pos, editor.uri);
 				} catch (e) {
 					window.showErrorMessage((e as Error).message);
 				}
@@ -307,7 +306,7 @@ export class LinkCodeWithSelectedNodeService {
 					const symbolName = match[1];
 					const pos = await resolveWorkspaceSymbol(symbolName);
 					if (pos) {
-						await this.revealSelection(pos);
+						await this.revealSelection(pos, editor.uri);
 					} else {
 						window.showErrorMessage(
 							`No symbol found with name "${symbolName}". Maybe you need to load the symbols by opening at least one of its code files?`
@@ -321,38 +320,30 @@ export class LinkCodeWithSelectedNodeService {
 	private lastDecorationType: TextEditorDecorationType | undefined;
 
 	private async revealSelection(
-		pos: DeserializedCodePosition
+		pos: DeserializedCodePosition,
+		diagramUri: Uri
 	): Promise<void> {
-		if (pos.range) {
-			const d = await workspace.openTextDocument(pos.uri);
-			const e = await window.showTextDocument(d, {
-				viewColumn: ViewColumn.One,
-				preserveFocus: true,
-			});
-			e.revealRange(pos.range, TextEditorRevealType.Default);
-
-			const highlightDecorationType =
-				window.createTextEditorDecorationType({
-					backgroundColor: new ThemeColor(
-						"editor.stackFrameHighlightBackground"
-					),
-				});
-
-			if (this.lastDecorationType) {
-				e.setDecorations(this.lastDecorationType, []);
-			}
-			this.lastDecorationType = highlightDecorationType;
-
-			e.setDecorations(highlightDecorationType, [pos.range]);
-			wait(1000).then(() => {
-				e.setDecorations(highlightDecorationType, []);
-			});
-		} else {
-			await commands.executeCommand("vscode.open", pos.uri, {
-				viewColumn: ViewColumn.One,
-				preserveFocus: true,
-			});
+		const editor = await openLinkedFile(pos.uri, diagramUri);
+		if (!editor || !pos.range) {
+			return;
 		}
+		editor.revealRange(pos.range, TextEditorRevealType.Default);
+
+		const highlightDecorationType = window.createTextEditorDecorationType({
+			backgroundColor: new ThemeColor(
+				"editor.stackFrameHighlightBackground"
+			),
+		});
+
+		if (this.lastDecorationType) {
+			editor.setDecorations(this.lastDecorationType, []);
+		}
+		this.lastDecorationType = highlightDecorationType;
+
+		editor.setDecorations(highlightDecorationType, [pos.range]);
+		wait(1000).then(() => {
+			editor.setDecorations(highlightDecorationType, []);
+		});
 	}
 }
 

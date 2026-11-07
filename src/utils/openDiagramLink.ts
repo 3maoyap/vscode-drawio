@@ -151,20 +151,39 @@ function findOpenColumn(target: vscode.Uri): vscode.ViewColumn | undefined {
 	return editor?.viewColumn;
 }
 
-/** Activates an already open file instead of opening a second tab. */
-async function activateExisting(
+/**
+ * Opens a linked file, or activates its existing view. The group next to the
+ * diagram is preferred (right, then left, then a new group on the right).
+ * `preview: false` keeps the tab in the navigation history so `Alt+Left`
+ * can go back to the diagram. Returns the editor for callers that reveal a
+ * range, and `undefined` for non-text targets handled by the editor picker.
+ */
+export async function openLinkedFile(
 	target: vscode.Uri,
-	viewColumn: vscode.ViewColumn
-): Promise<void> {
+	diagramUri: vscode.Uri
+): Promise<vscode.TextEditor | undefined> {
+	const key = target.toString();
+	if (pendingLinks.has(key)) {
+		return undefined;
+	}
+	pendingLinks.add(key);
 	try {
-		const document = await vscode.workspace.openTextDocument(target);
-		await vscode.window.showTextDocument(document, { viewColumn });
-	} catch {
-		// Non-text targets are handled by the editor picker instead.
-		await vscode.commands.executeCommand("vscode.open", target, {
-			viewColumn,
-			preview: false,
-		});
+		const column = findOpenColumn(target) ?? resolveTargetColumn(diagramUri);
+		try {
+			const document = await vscode.workspace.openTextDocument(target);
+			return await vscode.window.showTextDocument(document, {
+				viewColumn: column,
+				preview: false,
+			});
+		} catch {
+			await vscode.commands.executeCommand("vscode.open", target, {
+				viewColumn: column,
+				preview: false,
+			});
+			return undefined;
+		}
+	} finally {
+		pendingLinks.delete(key);
 	}
 }
 
@@ -242,18 +261,7 @@ export async function handleDiagramLink(
 	}
 
 	const target = vscode.Uri.file(targetPath);
-	const key = target.toString();
-	if (pendingLinks.has(key)) {
-		return;
-	}
-	const openColumn = findOpenColumn(target);
-	pendingLinks.add(key);
-	try {
-		if (openColumn !== undefined) {
-			await activateExisting(target, openColumn);
-			return;
-		}
-
+	if (findOpenColumn(target) === undefined) {
 		try {
 			await vscode.workspace.fs.stat(target);
 		} catch {
@@ -262,12 +270,6 @@ export async function handleDiagramLink(
 			);
 			return;
 		}
-
-		await vscode.commands.executeCommand("vscode.open", target, {
-			viewColumn: resolveTargetColumn(context.diagramUri),
-			preview: false,
-		});
-	} finally {
-		pendingLinks.delete(key);
 	}
+	await openLinkedFile(target, context.diagramUri);
 }
