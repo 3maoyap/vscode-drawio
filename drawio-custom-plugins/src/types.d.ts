@@ -1,8 +1,24 @@
 
 declare type CustomDrawioAction = UpdateVerticesAction | AddVerticesAction | GetVerticesAction
-    | LinkSelectedNodeWithDataAction | NodeSelectionEnabledAction | UpdateLiveshareViewState;
+    | LinkSelectedNodeWithDataAction | NodeSelectionEnabledAction | UpdateLiveshareViewState
+    | ImageRefsResolvedAction;
 declare type CustomDrawioEvent = NodeSelectedEvent | GetVerticesResultEvent
-    | UpdateLocalStorage | PluginLoaded | CursorChangedEvent | SelectionChangedEvent | FocusChangedEvent | InvokeCommandEvent | SelectionRectangleChangedEvent;
+    | UpdateLocalStorage | PluginLoaded | CursorChangedEvent | SelectionChangedEvent | FocusChangedEvent | InvokeCommandEvent | SelectionRectangleChangedEvent
+    | ResolveImageRefsEvent;
+
+declare interface ResolveImageRefsEvent {
+    event: "resolveImageRefs";
+    requestId: string;
+    /** Relative paths or file:// URIs of local images. */
+    refs: string[];
+}
+
+declare interface ImageRefsResolvedAction {
+    action: "imageRefsResolved";
+    requestId: string;
+    /** Short draw.io data URIs, null for references that could not be read. */
+    images: ({ value: string } | null)[];
+}
 
 declare interface InvokeCommandEvent {
     event: "invokeCommand";

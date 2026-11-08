@@ -154,9 +154,278 @@
 
 						evt.stopPropagation();
 						evt.preventDefault();
-					}
-				});
-			})();
+						}
+						});
+
+						// Linked images: diagrams on disk only contain relative image
+						// references. A webview resolves those against the bundled draw.io
+						// app folder, so the extension host reads the local file and hands
+						// back a short data URI that draw.io can render. The host registers
+						// the reference so the saved XML keeps the relative path.
+						const linkedImages = (function () {
+						const pending = new Map();
+						const resolved = new Map();
+						let nextId = 0;
+
+						const IMAGE_FILE =
+							/\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)($|[?#])/i;
+
+						function isLocalRef(value) {
+							if (typeof value !== "string" || !value.trim()) return false;
+							const ref = value.trim();
+							if (/^file:\/\//i.test(ref)) return IMAGE_FILE.test(ref);
+							if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return false;
+							if (/^[\/\\]/.test(ref)) return false;
+							return IMAGE_FILE.test(ref);
+						}
+
+						function toBrowserDataUri(value) {
+						const comma = value.indexOf(",");
+						if (
+							comma > 0 &&
+							value.substring(0, 5) === "data:" &&
+							value.substring(comma - 7, comma + 1) !== ";base64,"
+						) {
+							return (
+								value.substring(0, comma) +
+								";base64," +
+								value.substring(comma + 1)
+							);
+						}
+						return value;
+						}
+
+						function resolve(refs, callback) {
+						const requestId = "imgrefs-" + ++nextId;
+						pending.set(requestId, callback);
+						sendToVsCode({ event: "resolveImageRefs", requestId, refs });
+						}
+
+						// The same file can appear in several data transfer formats
+						// (e.g. file:///c:/a.png and file:///c%3A/a.png).
+						function normalizeUri(uri) {
+							let value = uri.trim();
+							try {
+								value = decodeURIComponent(value);
+							} catch (e) {}
+							return value
+								.replace(/^file:\/\/\//i, "file:///")
+								.replace(/\/+$/, "");
+						}
+
+						function collectUris(dt) {
+							const values = [];
+						for (const type of [
+							"application/vnd.code.resourceUrls",
+							"text/uri-list",
+							"text/plain",
+						]) {
+							try {
+								const value = dt.getData(type);
+								if (value) values.push(value);
+							} catch (e) {}
+						}
+						const candidates = [];
+						for (const value of values) {
+							let parsed;
+							try {
+								parsed = JSON.parse(value);
+							} catch (e) {}
+							if (Array.isArray(parsed)) {
+								for (const item of parsed) {
+									if (typeof item === "string") {
+										candidates.push(item);
+									} else if (item && typeof item === "object") {
+										const nested =
+											item.uri ||
+											item.resource ||
+											(item.resourceUri &&
+												(item.resourceUri.path ||
+													item.resourceUri.external));
+										if (typeof nested === "string")
+											candidates.push(nested);
+									}
+								}
+							} else {
+								for (const line of value.split(/\r?\n/)) {
+									const trimmed = line.trim();
+									if (trimmed && !trimmed.startsWith("#"))
+										candidates.push(trimmed);
+								}
+							}
+						}
+						const result = [];
+						const seen = new Set();
+						for (const uri of candidates) {
+							const clean = uri.trim();
+							if (!IMAGE_FILE.test(clean)) continue;
+							if (/^https?:\/\//i.test(clean) || /^data:/i.test(clean))
+								continue;
+							const key = normalizeUri(clean);
+							if (seen.has(key)) continue;
+							seen.add(key);
+							result.push(clean);
+						}
+						return result;
+						}
+
+						// We consume the drop in the capture phase, so draw.io's own
+						// drop handlers (which remove the dotted highlight AND reset
+						// their cached dropElt) never run. Deleting the DOM node from
+						// here would leave those caches pointing at a detached node,
+						// and no highlight would ever be drawn again. Instead, make
+						// draw.io run its dragleave cleanup on every element that
+						// registered drag/drop listeners.
+						const dropTargets = new Set();
+						function rememberDropTarget(target) {
+							if (target) dropTargets.add(target);
+						}
+						function resetDropHighlights() {
+							for (const target of dropTargets) {
+								try {
+									target.dispatchEvent(
+										new MouseEvent("dragleave", {
+											bubbles: false,
+											clientX: 0,
+											clientY: 0,
+										})
+									);
+								} catch (e) {}
+							}
+						}
+
+						function hasUriTypes(dt) {
+						const types = Array.prototype.slice.call(dt.types || []);
+						return (
+							types.indexOf("application/vnd.code.resourceUrls") >= 0 ||
+							types.indexOf("text/uri-list") >= 0
+						);
+						}
+
+						function insertImages(images, x, y) {
+						const graph =
+							window.editorUi &&
+							window.editorUi.editor &&
+							window.editorUi.editor.graph;
+						if (!graph) return;
+						let index = 0;
+						const seen = new Set();
+						function next() {
+							if (index >= images.length) return;
+							const item = images[index++];
+							if (!item || typeof item.value !== "string") {
+								next();
+								return;
+							}
+							if (seen.has(item.value)) {
+								next();
+								return;
+							}
+							seen.add(item.value);
+							const offset = (index - 1) * 20;
+							const img = new Image();
+							img.onload = function () {
+								const scale = Math.min(
+									1,
+									520 / Math.max(1, img.width, img.height)
+								);
+								const w = Math.max(1, Math.round(img.width * scale));
+								const h = Math.max(1, Math.round(img.height * scale));
+								graph.model.beginUpdate();
+								try {
+									graph.insertVertex(
+										graph.getDefaultParent(),
+										null,
+										"",
+										x + offset,
+										y + offset,
+										w,
+										h,
+										"shape=image;image=" +
+											item.value +
+											";imageAspect=0;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;"
+									);
+								} finally {
+									graph.model.endUpdate();
+								}
+								next();
+							};
+							img.onerror = next;
+							img.src = toBrowserDataUri(item.value);
+						}
+						next();
+						}
+
+						window.addEventListener("message", function (evt) {
+						let data = evt.data;
+						if (typeof data === "string") {
+							try {
+								data = JSON.parse(data);
+							} catch (e) {
+								return;
+							}
+						}
+						if (!data || data.action !== "imageRefsResolved") return;
+						const callback = pending.get(data.requestId);
+						if (!callback) return;
+						pending.delete(data.requestId);
+						callback(
+							Array.isArray(data.images) ? data.images : []
+						);
+						});
+
+						window.addEventListener(
+						"dragover",
+						function (evt) {
+							if (evt.dataTransfer && hasUriTypes(evt.dataTransfer))
+								evt.preventDefault();
+						},
+						true
+						);
+
+						window.addEventListener(
+						"drop",
+						function (evt) {
+							const dt = evt.dataTransfer;
+							if (!dt) return;
+							const uris = collectUris(dt);
+							// Only files (OS drop): draw.io inserts them and the
+							// host extracts the resulting data URI. If a dialog is
+							// open, the ImageDialog's own drop handler runs and is
+							// covered by the loadImage patch below.
+							if (
+								uris.length === 0 ||
+								(window.editorUi && window.editorUi.dialog)
+							)
+								return;
+							evt.preventDefault();
+							evt.stopImmediatePropagation();
+							resetDropHighlights();
+							const graph =
+								window.editorUi &&
+								window.editorUi.editor &&
+								window.editorUi.editor.graph;
+							const point =
+								graph && graph.getPointForEvent
+									? graph.getPointForEvent(evt)
+									: { x: 0, y: 0 };
+							resolve(uris, function (images) {
+								insertImages(images, point.x, point.y);
+							});
+						},
+						true
+						);
+
+						return {
+							isLocalRef,
+							toBrowserDataUri,
+							resolve,
+							resolved,
+							rememberDropTarget,
+						};
+						})();
+						window.linkedImages = linkedImages;
+						})();
 
 			var appearance = parseInt($$appearance$$),
 				theme = $$theme$$,
@@ -392,10 +661,115 @@
 					};
 				});
 
+				// Insert Image: a relative path (or a file:// URI pasted or
+				// dropped into the dialog) cannot be loaded by the webview.
+				// Resolve it through the extension host before draw.io's
+				// loadImage check, and hand the resolved data URI to the action
+				// so that the cell gets a renderable value.
+				patchFn(EditorUi.prototype, "loadImage", function (old) {
+					return function (uri, onload, onerror) {
+						const li = window.linkedImages;
+						if (!li || !li.isLocalRef(uri)) {
+							return old.apply(this, arguments);
+						}
+						const cached = li.resolved.get(uri);
+						if (cached) {
+							return old.call(
+								this,
+								li.toBrowserDataUri(cached),
+								onload,
+								onerror
+							);
+						}
+						li.resolve([uri], (images) => {
+							const value = images[0] && images[0].value;
+							if (!value) {
+								// Not a local file (e.g. a draw.io internal
+								// resource): let the browser try the original
+								// URL instead of breaking it.
+								old.call(this, uri, onload, onerror);
+								return;
+							}
+							li.resolved.set(uri, value);
+							old.call(
+								this,
+								li.toBrowserDataUri(value),
+								onload,
+								onerror
+							);
+						});
+					};
+				});
+
+				patchFn(EditorUi.prototype, "showImageDialog", function (old) {
+					return function (title, value, fn) {
+						const args = Array.prototype.slice.call(arguments);
+						args[2] = function (newValue, w, h) {
+							const li = window.linkedImages;
+							const rest = Array.prototype.slice.call(
+								arguments,
+								3
+							);
+							const cached = li && li.resolved.get(newValue);
+							if (cached) {
+								return fn.apply(
+									null,
+									[cached, w, h].concat(rest)
+								);
+							}
+							// Offline draw.io skips loadImage, so resolve here.
+							if (li && li.isLocalRef(newValue)) {
+								li.resolve([newValue], (images) => {
+									const value =
+										images[0] && images[0].value;
+									if (!value) {
+										fn.apply(
+											null,
+											[newValue, w, h].concat(rest)
+										);
+										return;
+									}
+									li.resolved.set(newValue, value);
+									const img = new Image();
+									img.onload = function () {
+										fn.apply(
+											null,
+											[
+												value,
+												img.width || w,
+												img.height || h,
+											].concat(rest)
+										);
+									};
+									img.onerror = function () {
+										fn.apply(
+											null,
+											[value, w, h].concat(rest)
+										);
+									};
+									img.src = li.toBrowserDataUri(value);
+								});
+								return;
+							}
+							return fn.apply(null, arguments);
+						};
+						return old.apply(this, args);
+					};
+				});
+
 				// This prevents Draw.io from overriding VS Code commands
 				patchFn(mxEvent, "addListener", function (old) {
 					return function (...args) {
 						const [target, eventName, oldHandler] = args;
+						// Remember every element that has drag/drop listeners so
+						// a consumed drop can make draw.io reset its own drop
+						// highlights (see resetDropHighlights).
+						if (
+							window.linkedImages &&
+							(eventName === "drop" || eventName === "dragleave")
+						) {
+							window.linkedImages.rememberDropTarget(target);
+						}
 						if (eventName === "keydown") {
 							args[2] = (/** @type {KeyboardEvent} */ keyEvt) => {
 								// Draw.io should not override these shortcuts

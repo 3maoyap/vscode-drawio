@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram id="CFEXHEysud7tDhojMti9" name="Page-1">
-        <mxGraphModel dx="857" dy="821" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+        <mxGraphModel dx="813" dy="821" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -9,6 +9,12 @@
                         <mxGeometry height="60" width="120" x="160" y="210" as="geometry"/>
                     </mxCell>
                 </UserObject>
+                <mxCell id="0Zhf1ttT5r0y-Nf4yaMB-1" parent="1" style="shape=image;image=./inline-editor/inline-editor-code-lens.png;imageAspect=0;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;" value="" vertex="1">
+                    <mxGeometry height="91" width="413" x="160" y="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="0Zhf1ttT5r0y-Nf4yaMB-2" parent="1" style="shape=image;image=./inline-editor/inline-editor-markdown.png;imageAspect=0;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;" value="" vertex="1">
+                    <mxGeometry height="179" width="520" x="160" y="450" as="geometry"/>
+                </mxCell>
             </root>
         </mxGraphModel>
     </diagram>

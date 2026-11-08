@@ -3,6 +3,7 @@ import {
 	CustomTextEditorProvider,
 	Range,
 	TextDocument,
+	Uri,
 	WebviewPanel,
 	window,
 	workspace,
@@ -10,6 +11,8 @@ import {
 } from "vscode";
 import formatter = require("xml-formatter");
 import { DrawioEditorService } from "./DrawioEditorService";
+import { isRelativeImageRef } from "./utils/linkedImages";
+import { VscodeLinkedImageHost } from "./utils/vscodeLinkedImageHost";
 
 export class DrawioEditorProviderText implements CustomTextEditorProvider {
 	constructor(private readonly drawioEditorService: DrawioEditorService) {}
@@ -33,6 +36,40 @@ export class DrawioEditorProviderText implements CustomTextEditorProvider {
 					{ isReadOnly }
 				);
 			const drawioClient = editor.drawioClient;
+			// Shared with the export paths so that extracted images keep their
+			// relative references instead of being written a second time.
+			const imageHost = new VscodeLinkedImageHost(document.uri);
+			const linkedImages = editor.linkedImages;
+
+			// Resolves local image references for the webview. Accepts relative
+			// paths (typed into the Insert Image dialog) and file URIs / absolute
+			// paths (dropped from the VS Code explorer). The relative reference
+			// is registered so the saved diagram keeps that exact path.
+			drawioClient.onResolveImageRefs.sub(async ({ requestId, refs }) => {
+				const images: ({ value: string } | null)[] = [];
+				for (const raw of refs) {
+					let ref: string | undefined;
+					try {
+						if (/^file:\/\//i.test(raw)) {
+							ref = imageHost.getRelativeRef(Uri.parse(raw, true));
+						} else if (/^[a-z]:[\\/]/i.test(raw) || raw.startsWith("\\\\")) {
+							ref = imageHost.getRelativeRef(Uri.file(raw));
+						} else if (isRelativeImageRef(raw)) {
+							ref = raw.trim();
+						}
+						const image = ref ? await imageHost.readImage(ref) : undefined;
+						if (!ref || !image) {
+							images.push(null);
+							continue;
+						}
+						linkedImages.registerRef(image.mime, image.data, ref);
+						images.push({ value: `data:${image.mime},${image.data}` });
+					} catch {
+						images.push(null);
+					}
+				}
+				drawioClient.sendImageRefsResolved({ requestId, images });
+			});
 
 			interface NormalizedDocument {
 				equals(other: this): boolean;
@@ -69,7 +106,7 @@ export class DrawioEditorProviderText implements CustomTextEditorProvider {
 				}
 				lastDocument = newDocument;
 
-				await drawioClient.mergeXmlLike(newText);
+				await drawioClient.mergeXmlLike(await linkedImages.toEditor(newText));
 			});
 
 			// Tracks the most recent onChange edit so a save can wait for it to be
@@ -97,6 +134,10 @@ export class DrawioEditorProviderText implements CustomTextEditorProvider {
 
 						return formatter(newXml);
 					} else {
+						// Images are stored as relative references on disk only.
+						// Draw.io needs short data URIs to render them in the webview.
+						newXml = await linkedImages.toDisk(newXml);
+
 						if (newXml.startsWith('<mxfile host="')) {
 							newXml = newXml.replace(
 								/^<mxfile host="(.*?)"/,
@@ -165,7 +206,9 @@ export class DrawioEditorProviderText implements CustomTextEditorProvider {
 			});
 
 			drawioClient.onInit.sub(async () => {
-				drawioClient.loadXmlLike(document.getText());
+				drawioClient.loadXmlLike(
+					await linkedImages.toEditor(document.getText())
+				);
 			});
 		} catch (e) {
 			window.showErrorMessage(`Failed to open diagram: ${e}`);

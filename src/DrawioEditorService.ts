@@ -20,6 +20,8 @@ import {
 } from "./DrawioClient";
 import { DrawioBinaryDocument } from "./DrawioEditorProviderBinary";
 import { BufferImpl } from "./utils/buffer";
+import { LinkedImageStore } from "./utils/linkedImages";
+import { createLinkedImageStore } from "./utils/vscodeLinkedImageHost";
 import { registerFailableCommand } from "./utils/registerFailableCommand";
 
 const drawioChangeThemeCommand = "hediet.vscode-drawio.changeTheme";
@@ -229,6 +231,9 @@ export class DrawioEditorService {
 		}
 		const content = await workspace.fs.readFile(source);
 
+		// The source file stores images as relative references. Resolve them
+		// for rendering and put the references back when exporting a diagram.
+		const linkedImages = createLinkedImageStore(source);
 		const panel = window.createWebviewPanel(
 			"hediet.vscode-drawio.export",
 			`Exporting ${basename(source.path)}`,
@@ -257,10 +262,25 @@ export class DrawioEditorService {
 							await drawioClient.loadPngWithEmbeddedXml(content);
 						} else {
 							await drawioClient.loadXmlLike(
-								BufferImpl.from(content).toString("utf-8")
+								await linkedImages.toEditor(
+									BufferImpl.from(content).toString("utf-8")
+								)
 							);
 						}
-						resolve(await drawioClient.export("." + format, true));
+						const exported = await drawioClient.export(
+							"." + format,
+							true
+						);
+						resolve(
+							format === "drawio"
+								? BufferImpl.from(
+										await linkedImages.toDisk(
+											exported.toString("utf-8")
+										),
+										"utf-8"
+								  )
+								: exported
+						);
 					} catch (e) {
 						reject(e);
 					}
@@ -338,6 +358,12 @@ function resolveUri(uriOrPath: Uri | string): Uri {
 export class DrawioEditor {
 	public readonly dispose = Disposable.fn();
 
+	/**
+	 * Shared with the text editor provider: keeps the mapping between the
+	 * relative image references on disk and the data URIs used in the webview.
+	 */
+	public readonly linkedImages: LinkedImageStore;
+
 	@observable private _isActive = false;
 	@observable private _hasFocus = false;
 
@@ -354,6 +380,7 @@ export class DrawioEditor {
 			| { kind: "drawio"; document: DrawioBinaryDocument },
 		public readonly config: DiagramConfig
 	) {
+		this.linkedImages = createLinkedImageStore(this.document.document.uri);
 		this._isActive = webviewPanel.active;
 		this.dispose.track(
 			webviewPanel.onDidChangeViewState(() => {
@@ -415,7 +442,7 @@ export class DrawioEditor {
 			return;
 		}
 
-		const buffer = await this.drawioClient.export(targetExtension);
+		const buffer = await this.exportClean(targetExtension, false);
 
 		const sourceUri = this.document.document.uri;
 		const oldContent = await workspace.fs.readFile(sourceUri);
@@ -431,7 +458,7 @@ export class DrawioEditor {
 
 	public async exportTo(targetExtension: string): Promise<void> {
 		// Exports the page that is visible in the editor
-		const buffer = await this.drawioClient.export(targetExtension, true);
+		const buffer = await this.exportClean(targetExtension, true);
 		const targetUri = await window.showSaveDialog({
 			defaultUri: this.getUriWithExtension(targetExtension),
 		});
@@ -440,6 +467,24 @@ export class DrawioEditor {
 			return;
 		}
 		await workspace.fs.writeFile(targetUri, buffer);
+	}
+
+	/** Exported `.drawio` files must use relative image references too. */
+	private async exportClean(
+		targetExtension: string,
+		currentPage: boolean
+	): Promise<BufferImpl> {
+		const buffer = await this.drawioClient.export(
+			targetExtension,
+			currentPage
+		);
+		if (!targetExtension.endsWith(".drawio")) {
+			return buffer;
+		}
+		return BufferImpl.from(
+			await this.linkedImages.toDisk(buffer.toString("utf-8")),
+			"utf-8"
+		);
 	}
 
 	public async handleConvertCommand(): Promise<void> {

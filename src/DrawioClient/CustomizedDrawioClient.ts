@@ -48,6 +48,13 @@ export class CustomizedDrawioClient extends DrawioClient<
 	}>();
 	public readonly onInvokeCommand = this.onInvokeCommandEmitter.asEvent();
 
+	private readonly onResolveImageRefsEmitter = new EventEmitter<{
+		requestId: string;
+		refs: string[];
+	}>();
+	public readonly onResolveImageRefs =
+		this.onResolveImageRefsEmitter.asEvent();
+
 	public linkSelectedNodeWithData(linkedData: unknown) {
 		this.sendCustomAction({
 			action: "linkSelectedNodeWithData",
@@ -98,6 +105,17 @@ export class CustomizedDrawioClient extends DrawioClient<
 		});
 	}
 
+	/** Sends resolved local images back to the webview. */
+	public sendImageRefsResolved(result: {
+		requestId: string;
+		images: ({ value: string } | null)[];
+	}): void {
+		this.sendCustomAction({
+			action: "imageRefsResolved",
+			...result,
+		});
+	}
+
 	protected async handleEvent(evt: CustomDrawioEvent): Promise<void> {
 		if (evt.event === "nodeSelected") {
 			this.onNodeSelectedEmitter.emit({
@@ -119,6 +137,11 @@ export class CustomizedDrawioClient extends DrawioClient<
 		} else if (evt.event === "selectedRectangleChanged") {
 			this.onSelectedRectangleChangedEmitter.emit({
 				rectangle: evt.rect,
+			});
+		} else if (evt.event === "resolveImageRefs") {
+			this.onResolveImageRefsEmitter.emit({
+				requestId: evt.requestId,
+				refs: evt.refs,
 			});
 		} else {
 			await super.handleEvent(evt);
